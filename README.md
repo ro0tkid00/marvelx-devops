@@ -128,6 +128,7 @@ Kubernetes Secrets are only base64-encoded, and Helm stores a copy of the values
 - The CI image is built locally, because a registry would need TLS. Downloads are checked against their published checksums. That catches a corrupted download, but not a compromised source.
 - The app is podinfo rather than an image built by the pipeline, which would also need a registry. podinfo has the health, readiness and version endpoints the checks need.
 - The kind provider isn’t signed in the OpenTofu registry. The lock file pins its checksums for macOS and Linux.
+- The kind provider also doesn’t mark the cluster’s keys as sensitive, so a plan that replaces or destroys the cluster would print the admin key in the job log. The pipeline saves plans without printing them and shows a summary of actions and resource names instead.
 - There’s no ingress. `kubectl port-forward` is enough to reach the app, and it keeps the published ports to two.
 
 

@@ -46,6 +46,17 @@ variables:
     - export TF_HTTP_PASSWORD="$CI_JOB_TOKEN" TF_VAR_state_passphrase="${TOFU_STATE_PASSPHRASE:?TOFU_STATE_PASSPHRASE is not set}"
     - tofu -chdir="$TF_ROOT" init -input=false
 
+# The kind provider doesn't mark the cluster's keys as sensitive, so a plan that
+# changes or destroys the cluster would print them. Plans are saved silently and
+# summarised from their JSON form, which lists actions and addresses only.
+.plan_summary:
+  script:
+    - >
+      tofu -chdir="$TF_ROOT" show -json cluster.tfplan
+      | jq -r '[.resource_changes[]? | select(.change.actions != ["no-op"])
+      | "\(.change.actions | join("/")): \(.address)"]
+      | if length == 0 then "No changes" else .[] end'
+
 .kube:
   extends: .tofu
   before_script:
@@ -79,7 +90,8 @@ cluster:provision:
   extends: [.tofu, .on_default_branch]
   resource_group: cluster
   script:
-    - tofu -chdir="$TF_ROOT" plan -input=false -out=cluster.tfplan
+    - tofu -chdir="$TF_ROOT" plan -input=false -out=cluster.tfplan > /dev/null
+    - !reference [.plan_summary, script]
     - tofu -chdir="$TF_ROOT" apply -input=false cluster.tfplan
 
 app:deploy:
@@ -116,4 +128,6 @@ cluster:destroy:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
   script:
-    - tofu -chdir="$TF_ROOT" destroy -input=false -auto-approve
+    - tofu -chdir="$TF_ROOT" plan -destroy -input=false -out=cluster.tfplan > /dev/null
+    - !reference [.plan_summary, script]
+    - tofu -chdir="$TF_ROOT" apply -input=false cluster.tfplan
