@@ -156,7 +156,8 @@ ensure_runner() {
   log "Registering the runner"
   local token
   token=$(api user/runners --data runner_type=instance_type --data description=local-docker --data run_untagged=true | jq -r .token)
-  docker exec --env CI_SERVER_TOKEN="$token" "$RUNNER" gitlab-runner register \
+  local output
+  output=$(docker exec --env CI_SERVER_TOKEN="$token" "$RUNNER" gitlab-runner register \
     --non-interactive \
     --url http://gitlab \
     --clone-url http://gitlab \
@@ -164,8 +165,8 @@ ensure_runner() {
     --docker-image "$TOOLS_IMAGE" \
     --docker-pull-policy if-not-present \
     --docker-network-mode "$NETWORK" \
-    --docker-volumes /var/run/docker.sock:/var/run/docker.sock \
-    > /dev/null
+    --docker-volumes /var/run/docker.sock:/var/run/docker.sock 2>&1) \
+    || die "runner registration failed: $output"
 }
 
 build_tools_image() {
