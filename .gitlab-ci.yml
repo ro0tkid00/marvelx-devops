@@ -93,6 +93,9 @@ cluster:provision:
     - tofu -chdir="$TF_ROOT" plan -input=false -out=cluster.tfplan > /dev/null
     - !reference [.plan_summary, script]
     - tofu -chdir="$TF_ROOT" apply -input=false cluster.tfplan
+  after_script:
+    # the provider also writes an admin kubeconfig into the workspace
+    - rm -f "$TF_ROOT/$CLUSTER_NAME-config"
 
 app:deploy:
   stage: deploy
