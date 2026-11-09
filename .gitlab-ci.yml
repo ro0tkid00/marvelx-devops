@@ -1,0 +1,119 @@
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+stages:
+  - validate
+  - provision
+  - deploy
+  - verify
+  - destroy
+
+default:
+  image: marvelx/ci-tools:local
+  interruptible: true
+
+variables:
+  TF_ROOT: infra
+  CHART: chart/app
+  RELEASE: app
+  NAMESPACE: app
+  CLUSTER_NAME: marvelx
+  # kind nodes join the network the runner's job containers use
+  KIND_EXPERIMENTAL_DOCKER_NETWORK: marvelx
+  TF_IN_AUTOMATION: "true"
+  TF_PLUGIN_CACHE_DIR: $CI_PROJECT_DIR/.tofu-plugins
+  # GitLab-managed state, reached on the internal Docker network
+  TF_HTTP_ADDRESS: http://gitlab/api/v4/projects/$CI_PROJECT_ID/terraform/state/$CLUSTER_NAME
+  TF_HTTP_LOCK_ADDRESS: http://gitlab/api/v4/projects/$CI_PROJECT_ID/terraform/state/$CLUSTER_NAME/lock
+  TF_HTTP_UNLOCK_ADDRESS: http://gitlab/api/v4/projects/$CI_PROJECT_ID/terraform/state/$CLUSTER_NAME/lock
+  TF_HTTP_LOCK_METHOD: POST
+  TF_HTTP_UNLOCK_METHOD: DELETE
+  TF_HTTP_USERNAME: gitlab-ci-token
+
+.on_default_branch:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+.tofu:
+  cache:
+    key: tofu-plugins
+    paths:
+      - .tofu-plugins/
+  before_script:
+    - mkdir -p "$TF_PLUGIN_CACHE_DIR"
+    - export TF_HTTP_PASSWORD="$CI_JOB_TOKEN" TF_VAR_state_passphrase="${TOFU_STATE_PASSPHRASE:?TOFU_STATE_PASSPHRASE is not set}"
+    - tofu -chdir="$TF_ROOT" init -input=false
+
+.kube:
+  extends: .tofu
+  before_script:
+    - !reference [.tofu, before_script]
+    - export KUBECONFIG="$(mktemp)"
+    - tofu -chdir="$TF_ROOT" output -raw kubeconfig > "$KUBECONFIG"
+    - kubectl config set-cluster "kind-$CLUSTER_NAME" --server="$(tofu -chdir="$TF_ROOT" output -raw internal_endpoint)" > /dev/null
+
+tofu:validate:
+  stage: validate
+  cache:
+    key: tofu-plugins
+    paths:
+      - .tofu-plugins/
+  variables:
+    TF_VAR_state_passphrase: validate-only-placeholder
+  script:
+    - mkdir -p "$TF_PLUGIN_CACHE_DIR"
+    - tofu fmt -check -recursive "$TF_ROOT"
+    - tofu -chdir="$TF_ROOT" init -backend=false -input=false
+    - tofu -chdir="$TF_ROOT" validate
+
+helm:validate:
+  stage: validate
+  script:
+    - helm lint "$CHART" --strict --set secret.apiKey=placeholder
+    - helm template "$RELEASE" "$CHART" --set secret.apiKey=placeholder > /dev/null
+
+cluster:provision:
+  stage: provision
+  extends: [.tofu, .on_default_branch]
+  resource_group: cluster
+  script:
+    - tofu -chdir="$TF_ROOT" plan -input=false -out=cluster.tfplan
+    - tofu -chdir="$TF_ROOT" apply -input=false cluster.tfplan
+
+app:deploy:
+  stage: deploy
+  extends: [.kube, .on_default_branch]
+  resource_group: cluster
+  script:
+    - secret_file="$(mktemp)"
+    - printf '%s' "${APP_SECRET:?APP_SECRET is not set}" > "$secret_file"
+    - >
+      helm upgrade --install "$RELEASE" "$CHART"
+      --namespace "$NAMESPACE" --create-namespace
+      --set-file secret.apiKey="$secret_file"
+      ${APP_IMAGE_TAG:+--set-string image.tag="$APP_IMAGE_TAG"}
+      ${APP_REPLICAS:+--set replicaCount="$APP_REPLICAS"}
+      --rollback-on-failure --wait --timeout 5m
+    - rm -f "$secret_file"
+
+app:verify:
+  stage: verify
+  extends: [.kube, .on_default_branch]
+  resource_group: cluster
+  script:
+    - kubectl -n "$NAMESPACE" rollout status deployment/"$RELEASE" --timeout=120s
+    - kubectl -n "$NAMESPACE" get deployment,pods,service -l app.kubernetes.io/instance="$RELEASE" -o wide
+    - echo "Secret keys:" && kubectl -n "$NAMESPACE" get secret "$RELEASE" -o go-template='{{range $k, $_ := .data}}{{$k}}{{"\n"}}{{end}}'
+    - helm test "$RELEASE" --namespace "$NAMESPACE" --logs
+
+cluster:destroy:
+  stage: destroy
+  extends: [.tofu]
+  resource_group: cluster
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  script:
+    - tofu -chdir="$TF_ROOT" destroy -input=false -auto-approve

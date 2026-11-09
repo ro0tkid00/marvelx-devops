@@ -1,0 +1,8 @@
+.local/
+.terraform/
+.tofu-plugins/
+*.tfstate
+*.tfstate.*
+*.tfplan
+infra/*-config
+.DS_Store
