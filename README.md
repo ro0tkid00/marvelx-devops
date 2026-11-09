@@ -1,6 +1,26 @@
-# MarvelX DevOps take-home
+<h1 align="center">MarvelX DevOps take-home</h1>
 
-A self-hosted GitLab and runner, a kind cluster provisioned with OpenTofu, and a pipeline that validates, provisions, deploys a Helm chart and verifies it, all on one machine.
+<p align="center">
+  A self-hosted GitLab, a kind cluster provisioned with OpenTofu,<br>
+  and a pipeline that deploys a Helm chart and verifies it, all on one machine.
+</p>
+
+<p align="center">
+  <img alt="GitLab CE 19.5.3" src="https://img.shields.io/badge/GitLab_CE-19.5.3-FC6D26?logo=gitlab&amp;logoColor=white">
+  <img alt="OpenTofu 1.13.8" src="https://img.shields.io/badge/OpenTofu-1.13.8-FFDA18?logo=opentofu&amp;logoColor=black">
+  <img alt="Kubernetes 1.37" src="https://img.shields.io/badge/Kubernetes-1.37-326CE5?logo=kubernetes&amp;logoColor=white">
+  <img alt="Helm 4.3.1" src="https://img.shields.io/badge/Helm-4.3.1-0F1689?logo=helm&amp;logoColor=white">
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#design">Design</a> ·
+  <a href="#secrets">Secrets</a> ·
+  <a href="#trade-offs">Trade-offs</a>
+</p>
+
+<br>
 
 ![Architecture](docs/architecture.png)
 
@@ -11,20 +31,23 @@ A self-hosted GitLab and runner, a kind cluster provisioned with OpenTofu, and a
 
 You need Docker with at least 8 GB of memory, plus `git`, `curl`, `jq`, `openssl` and `kubectl`. OpenTofu, Helm and kind run inside the CI image, so you don’t need to install them.
 
-On macOS:
-
 ```bash
 brew install --cask orbstack    # or Docker Desktop
 brew install jq kubectl         # git, curl and openssl ship with macOS
 ```
 
-On Debian or Ubuntu:
+<details>
+<summary>On Debian or Ubuntu</summary>
+
+<br>
 
 ```bash
 sudo apt-get install -y git curl jq openssl
 ```
 
 Then install [Docker Engine](https://docs.docker.com/engine/install/), add your user to the `docker` group, and install [kubectl](https://kubernetes.io/docs/tasks/tools/).
+
+</details>
 
 ### 2. Check your machine
 
@@ -40,13 +63,14 @@ This lists each tool and its version, and warns if Docker has less than 6 GB of 
 ./run.sh up
 ```
 
-The first run takes about ten minutes, mostly waiting for GitLab to boot. When the pipeline finishes, the script prints the result and the running pods.
+> [!NOTE]
+> The first run takes about ten minutes, mostly waiting for GitLab to boot. Later runs take two or three.
+
+When the pipeline finishes, the script prints the result and the running pods.
 
 ### 4. Look around
 
 GitLab is at [http://localhost:8080](http://localhost:8080). Log in as `root` with the password in `.local/root-password`, and open **marvelx → Build → Pipelines**.
-
-The cluster:
 
 ```bash
 export KUBECONFIG=$PWD/.local/kubeconfig
@@ -121,6 +145,9 @@ Kubernetes Secrets are only base64-encoded, and Helm stores a copy of the values
 
 
 ## Trade-offs
+
+> [!IMPORTANT]
+> CI jobs can control Docker on the host. Run this on a machine you trust, not on shared infrastructure.
 
 - The runner uses the host’s Docker socket, because the provisioning job needs Docker to create the kind nodes. This gives jobs root-level access to the host. Docker-in-Docker needs privileged containers, so it isn’t safer. On shared infrastructure, I’d run CI on isolated hosts or use the Kubernetes executor.
 - kind joins the `marvelx` network through `KIND_EXPERIMENTAL_DOCKER_NETWORK`. The setting has worked reliably for years, but kind still calls it experimental.
